@@ -1313,10 +1313,10 @@ class ExportManager {
             let actionHtml = '';
             if (item.can_download && item.download_url) {
                 actionHtml = `
-                    <a href="${API_BASE}${item.download_url}" target="_blank"
+                    <button onclick="window.exportManager.downloadFile('${item.export_token}', '${item.file_name}')"
                         class="px-3 py-1.5 bg-emerald-600 text-white text-sm rounded-md hover:bg-emerald-700 transition font-medium inline-block">
                         下载 (${item.download_count}/${item.max_downloads})
-                    </a>
+                    </button>
                 `;
             } else if (item.status === 'pending') {
                 actionHtml = `
@@ -1431,6 +1431,34 @@ class ExportManager {
         }, '取消导出申请');
     }
 
+    async downloadFile(token, fileName) {
+        try {
+            const response = await fetch(`${API_BASE}/download.php?token=${token}`, {
+                headers: authManager.getAuthHeaders()
+            });
+            
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.error || `下载失败 (${response.status})`);
+            }
+            
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileName || `export_${Date.now()}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+            
+            this.loadExports(this.currentFilter);
+        } catch (e) {
+            console.error('Download failed:', e);
+            uiManager.alert(e.message || '下载失败');
+        }
+    }
+
     showLoading() {
         document.getElementById('exportListLoading')?.classList.remove('hidden');
     }
@@ -1477,6 +1505,7 @@ class ApprovalManager {
             
             if (data.success) {
                 this.total = data.data.total;
+                this.currentList = data.data.list;
                 this.renderApprovalList(data.data.list);
                 this.renderPagination();
             }
@@ -1535,10 +1564,10 @@ class ApprovalManager {
                                 <span class="font-medium">用途：</span>${item.purpose}
                             </div>
                             <div class="text-sm text-gray-600 mb-1">
-                                <span class="font-medium">申请人：</span>${item.user_name}
+                                <span class="font-medium">申请人：</span>${item.applicant_name}
                             </div>
                             <div class="text-xs text-gray-400 flex gap-4">
-                                <span>记录数：${item.total_count} 条</span>
+                                <span>记录数：${item.total_count > 0 ? item.total_count + ' 条' : '待生成'}</span>
                                 <span>格式：${item.file_format.toUpperCase()}</span>
                                 <span>申请时间：${new Date(item.created_at).toLocaleString('zh-CN')}</span>
                             </div>
@@ -1556,59 +1585,56 @@ class ApprovalManager {
     async openApprovalModal(approvalId) {
         this.currentApprovalId = approvalId;
         
+        const item = this.currentList?.find(i => i.id === approvalId);
+        if (!item) {
+            uiManager.alert('找不到审批记录');
+            return;
+        }
+        
         try {
-            const params = new URLSearchParams({
-                action: 'detail',
-                id: approvalId
-            });
+            const fieldLabels = item.high_sensitivity_fields.map(f => 
+                `<span class="text-red-600 font-medium">${f.label}</span>`
+            ).join('、');
             
-            const response = await fetch(`${API_BASE}/export.php?${params}`, {
-                headers: authManager.getAuthHeaders()
-            });
-            
-            const data = await response.json();
-            
-            if (data.success) {
-                const item = data.data;
-                const fieldLabels = item.fields.map(f => 
-                    f.high_sensitivity ? `<span class="text-red-600 font-medium">${f.label}</span>` : f.label
-                ).join('、');
-                
-                const detailEl = document.getElementById('approvalDetail');
-                if (detailEl) {
-                    detailEl.innerHTML = `
-                        <div class="bg-gray-50 rounded-lg p-4 space-y-3">
+            const detailEl = document.getElementById('approvalDetail');
+            if (detailEl) {
+                detailEl.innerHTML = `
+                    <div class="bg-gray-50 rounded-lg p-4 space-y-3">
+                        <div>
+                            <span class="text-xs text-gray-500 uppercase font-semibold">申请人</span>
+                            <div class="text-sm text-gray-900 font-medium">${item.applicant_name}</div>
+                        </div>
+                        <div>
+                            <span class="text-xs text-gray-500 uppercase font-semibold">高敏字段</span>
+                            <div class="text-sm text-gray-900">${fieldLabels}</div>
+                        </div>
+                        <div>
+                            <span class="text-xs text-gray-500 uppercase font-semibold">导出用途</span>
+                            <div class="text-sm text-gray-900">${item.purpose}</div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-4">
                             <div>
-                                <span class="text-xs text-gray-500 uppercase font-semibold">申请人</span>
-                                <div class="text-sm text-gray-900 font-medium">${item.user_name}</div>
+                                <span class="text-xs text-gray-500 uppercase font-semibold">文件格式</span>
+                                <div class="text-sm text-gray-900">${item.file_format.toUpperCase()}</div>
                             </div>
                             <div>
-                                <span class="text-xs text-gray-500 uppercase font-semibold">导出字段</span>
-                                <div class="text-sm text-gray-900">${fieldLabels}</div>
-                            </div>
-                            <div>
-                                <span class="text-xs text-gray-500 uppercase font-semibold">导出用途</span>
-                                <div class="text-sm text-gray-900">${item.purpose}</div>
-                            </div>
-                            <div class="grid grid-cols-2 gap-4">
-                                <div>
-                                    <span class="text-xs text-gray-500 uppercase font-semibold">文件格式</span>
-                                    <div class="text-sm text-gray-900">${item.file_format.toUpperCase()}</div>
-                                </div>
-                                <div>
-                                    <span class="text-xs text-gray-500 uppercase font-semibold">记录数量</span>
-                                    <div class="text-sm text-gray-900">${item.total_count} 条</div>
-                                </div>
+                                <span class="text-xs text-gray-500 uppercase font-semibold">记录数量</span>
+                                <div class="text-sm text-gray-900">${item.total_count > 0 ? item.total_count + ' 条' : '审批通过后生成'}</div>
                             </div>
                         </div>
-                    `;
-                }
-                
-                document.getElementById('approvalComment').value = '';
-                document.getElementById('approvalModal').classList.remove('hidden');
-                uiManager.showOverlay();
+                        <div>
+                            <span class="text-xs text-gray-500 uppercase font-semibold">申请时间</span>
+                            <div class="text-sm text-gray-900">${new Date(item.created_at).toLocaleString('zh-CN')}</div>
+                        </div>
+                    </div>
+                `;
             }
+            
+            document.getElementById('approvalComment').value = '';
+            document.getElementById('approvalModal').classList.remove('hidden');
+            uiManager.showOverlay();
         } catch (e) {
+            console.error('Open approval modal failed:', e);
             uiManager.alert('加载审批详情失败');
         }
     }

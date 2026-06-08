@@ -67,9 +67,11 @@ function handleApprovalList() {
         SELECT a.*,
                er.export_token,
                er.fields,
-               er.purpose as export_purpose,
+               er.purpose,
                er.file_format,
-               er.expires_at
+               er.expires_at,
+               er.total_count,
+               er.status as export_status
         FROM approvals a
         INNER JOIN export_records er ON a.export_record_id = er.id
         WHERE $whereSql
@@ -290,6 +292,7 @@ function formatApprovalRecord($record) {
         'high_sensitivity_fields' => $fieldDisplay,
         'purpose' => $record['purpose'],
         'file_format' => $record['file_format'],
+        'total_count' => intval($record['total_count']),
         'status' => $record['status'],
         'approval_comment' => $record['approval_comment'],
         'approved_at' => $record['approved_at'],

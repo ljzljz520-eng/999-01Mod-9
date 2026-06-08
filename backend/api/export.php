@@ -67,6 +67,13 @@ function handleExportRequest() {
         throw new Exception('不支持的文件格式');
     }
 
+    $allowedFields = array_keys(Auth::getFieldLabels());
+    foreach ($fields as $field) {
+        if (!is_string($field) || !in_array($field, $allowedFields)) {
+            throw new Exception('非法的导出字段: ' . htmlspecialchars($field));
+        }
+    }
+
     $db = new Database();
     $pdo = $db->connect();
 
@@ -74,6 +81,7 @@ function handleExportRequest() {
     $highSensFields = array_values(array_intersect($fields, Auth::getHighSensitivityFields()));
     $exportToken = bin2hex(random_bytes(32));
     $expiresAt = date('Y-m-d H:i:s', time() + Auth::getExportExpireHours() * 3600);
+
     $status = $requiresApproval ? 'pending' : 'approved';
 
     $pdo->beginTransaction();
@@ -394,6 +402,26 @@ function countExportData($pdo, $filters) {
 }
 
 function generateExportFile($pdo, $exportRecordId, $fields, $filters, $user, $purpose, $fileFormat) {
+    $requiresApproval = Auth::checkHighSensitivityFields($fields);
+    
+    if ($requiresApproval) {
+        $recordStmt = $pdo->prepare("SELECT status, requires_approval FROM export_records WHERE id = :id");
+        $recordStmt->execute(['id' => $exportRecordId]);
+        $record = $recordStmt->fetch(PDO::FETCH_ASSOC);
+        
+        if (!$record || $record['status'] !== 'approved') {
+            throw new Exception('导出包含高敏字段，必须经过审批');
+        }
+        
+        $approvalStmt = $pdo->prepare("SELECT id FROM approvals WHERE export_record_id = :export_id AND status = 'approved'");
+        $approvalStmt->execute(['export_id' => $exportRecordId]);
+        $approval = $approvalStmt->fetch(PDO::FETCH_ASSOC);
+        
+        if (!$approval) {
+            throw new Exception('导出包含高敏字段，必须有主管审批记录');
+        }
+    }
+    
     $exportDir = __DIR__ . '/../exports';
     if (!is_dir($exportDir)) {
         mkdir($exportDir, 0755, true);
